@@ -2,22 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!--
-        Declare any permissions your app needs here.
-        For a network test drive app, you'll eventually need:
-        <uses-permission android:name="android.permission.INTERNET" />
-        <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-        <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" /> (for cell tower info & GPS)
-        <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /> (for cell tower info & network location)
-        <uses-permission android:name="android.permission.READ_PHONE_STATE" /> (for some telephony info, be mindful of privacy)
-        If targeting Android 10 (API 29) or higher and need background location for continuous network scanning:
-        <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-        If using Foreground Services for continuous collection (Android 9+):
-        <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-        If targeting Android 13 (API 33) and using ForegroundService for "phoneCall" or "location":
-        <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-        <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" /> (Example, if interacting with BT/Wi-Fi devices)
-    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
         android:allowBackup="true"
