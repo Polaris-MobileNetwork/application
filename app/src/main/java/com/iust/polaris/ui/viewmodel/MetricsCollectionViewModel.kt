@@ -1,9 +1,11 @@
 package com.iust.polaris.ui.viewmodel
 
+import android.app.Application // Application context is needed to start services
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.iust.polaris.data.local.NetworkMetric
 import com.iust.polaris.data.repository.NetworkMetricsRepository
+import com.iust.polaris.service.NetworkMetricService // Import your service
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -14,7 +16,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-// Data class to hold the entire state of our screen (remains the same)
 data class MetricsUiState(
     val isCollecting: Boolean = false,
     val collectionStatusText: String = "Ready to start collection.",
@@ -22,28 +23,28 @@ data class MetricsUiState(
     val isLoading: Boolean = true
 )
 
-@HiltViewModel // Annotation to enable Hilt injection for this ViewModel
-class MetricsCollectionViewModel @Inject constructor( // Inject the repository
+@HiltViewModel
+class MetricsCollectionViewModel @Inject constructor(
+    private val application: Application, // Inject Application context
     private val networkMetricsRepository: NetworkMetricsRepository
 ) : ViewModel() {
 
-    // Private mutable state for collection status and other UI elements not directly from DB
     private val _isCollecting = MutableStateFlow(false)
-    val isCollecting: StateFlow<Boolean> = _isCollecting.asStateFlow()
+    // No need for public isCollecting if uiState.isCollecting is used by UI
+    // val isCollecting: StateFlow<Boolean> = _isCollecting.asStateFlow()
 
     private val _collectionStatusText = MutableStateFlow("Ready to start collection.")
-    val collectionStatusText: StateFlow<String> = _collectionStatusText.asStateFlow()
+    // No need for public collectionStatusText if uiState.collectionStatusText is used
+    // val collectionStatusText: StateFlow<String> = _collectionStatusText.asStateFlow()
 
-    // Observe metrics from the repository
     private val _metricsFromDb: StateFlow<List<NetworkMetric>> =
         networkMetricsRepository.getAllMetrics()
             .stateIn(
                 scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5000), // Keep flow active for 5s after last subscriber
+                started = SharingStarted.WhileSubscribed(5000),
                 initialValue = emptyList()
             )
 
-    // Combine all state sources into a single UiState flow
     val uiState: StateFlow<MetricsUiState> = combine(
         _isCollecting,
         _collectionStatusText,
@@ -53,57 +54,50 @@ class MetricsCollectionViewModel @Inject constructor( // Inject the repository
             isCollecting = isCollecting,
             collectionStatusText = statusText,
             collectedMetrics = metricsList,
-            isLoading = false // Set to false once metrics are loaded (even if empty)
+            isLoading = false
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
-        initialValue = MetricsUiState() // Initial state with isLoading = true
+        initialValue = MetricsUiState()
     )
 
 
     fun onToggleCollection() {
-        viewModelScope.launch {
-            val currentlyCollecting = _isCollecting.value
-            if (currentlyCollecting) {
-                // Logic to stop collection will go here
-                _isCollecting.value = false
-                _collectionStatusText.value = "Collection stopped."
-            } else {
-                // Logic to start collection will go here
-                _isCollecting.value = true
-                _collectionStatusText.value = "Collecting network data..."
-                insertDummyMetric()
-            }
+        // We don't need viewModelScope.launch here if start/stopService are not suspend functions
+        val currentlyCollecting = _isCollecting.value
+        if (currentlyCollecting) {
+            NetworkMetricService.stopService(application) // Use application context
+            _isCollecting.value = false
+            _collectionStatusText.value = "Stopping collection..." // User feedback
+        } else {
+            NetworkMetricService.startService(application) // Use application context
+            _isCollecting.value = true
+            _collectionStatusText.value = "Starting collection..." // User feedback
         }
     }
 
-    private fun insertDummyMetric() {
+    // Dummy metric insertion is now handled by the service (or will be)
+    // We can remove insertDummyMetric() from here if the service handles all insertions.
+    // For now, let's keep it to ensure the DB part is testable from ViewModel if service is not fully ready.
+    private fun insertDummyMetricForTesting() {
         viewModelScope.launch {
             val dummyMetric = NetworkMetric(
                 timestamp = System.currentTimeMillis(),
-                networkType = "LTE_Hilt", // Updated for clarity
-                signalStrength = -85,
-                latitude = 35.7000,
-                longitude = 51.3300,
-                cellId = "12345_Hilt",
+                networkType = "LTE_Hilt_VM_Test",
+                signalStrength = -77,
+                latitude = 35.7003,
+                longitude = 51.3303,
+                cellId = "Hilt_VM_Test_002",
                 isUploaded = false,
-                plmnId = "43211",
-                lac = 1001,
-                tac = 2002,
-                rac = null,
-                arfcn = 1500,
-                frequencyBand = "Band 3",
-                actualFrequencyMhz = 1800.5,
-                rsrp = -90,
-                rsrq = -12,
-                rscp = null,
-                ecno = null,
-                rxlev = null
+                plmnId = "43211", lac = 1001, tac = 2002, rac = null, arfcn = 1500,
+                frequencyBand = "Band 3", actualFrequencyMhz = 1800.5,
+                rsrp = -90, rsrq = -12, rscp = null, ecno = null, rxlev = null
             )
             networkMetricsRepository.insertMetric(dummyMetric)
         }
     }
+
 
     fun clearAllCollectedMetrics() {
         viewModelScope.launch {
