@@ -12,10 +12,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import com.iust.polaris.ui.components.HandlePermissions
+import com.iust.polaris.ui.screens.MetricsCollectionScreen
 import com.iust.polaris.ui.theme.PolarisAppTheme
+import dagger.hilt.android.AndroidEntryPoint
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,7 +35,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     HandlePermissions (permissions = requiredPermissions) {
-                        AppRoot()
+                        MetricsCollectionScreen()
                     }
                 }
              }
@@ -51,13 +53,5 @@ fun AppRoot(modifier: Modifier = Modifier) {
             text = "Hello, Network Test App!",
             style = MaterialTheme.typography.headlineMedium
         )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun DefaultPreview() {
-    PolarisAppTheme {
-        AppRoot()
     }
 }
