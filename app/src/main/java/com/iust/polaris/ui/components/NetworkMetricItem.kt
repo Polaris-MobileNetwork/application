@@ -7,15 +7,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.iust.polaris.R
 import com.iust.polaris.data.local.NetworkMetric
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -35,19 +41,28 @@ fun NetworkMetricItem(metric: NetworkMetric) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "ID: ${metric.id}",
                     style = itemTextStyle,
                     color = itemTextColor
                 )
-                Text(
-                    text = sdf.format(Date(metric.timestamp)),
-                    style = itemTextStyle,
-                    color = itemTextColor
+                // --- NEW: Sync Status Icon ---
+                Icon(
+                    painter = painterResource(if (metric.isUploaded) R.drawable.ic_cloude_done else R.drawable.ic_cloude_off),
+                    contentDescription = if (metric.isUploaded) "Synced" else "Not Synced",
+                    tint = if (metric.isUploaded) MaterialTheme.colorScheme.primary else itemTextColor.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp)
                 )
             }
+            // Display timestamp on a new line for better alignment with the icon
+            Text(
+                text = sdf.format(Date(metric.timestamp)),
+                style = itemTextStyle,
+                color = itemTextColor
+            )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "${metric.networkType} | Signal: ${metric.signalStrength.takeIf { it != -999 } ?: "N/A"} dBm",

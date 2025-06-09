@@ -14,8 +14,14 @@ class OfflineFirstNetworkMetricsRepository(
     private val networkMetricDao: NetworkMetricDao
 ) : NetworkMetricsRepository {
 
-    override fun getAllMetrics(): Flow<List<NetworkMetric>> {
-        return networkMetricDao.getAllMetrics()
+    override fun getAllMetricsFlow(): Flow<List<NetworkMetric>> {
+        return networkMetricDao.getAllMetricsFlow()
+    }
+
+    override suspend fun getMetricsPaged(page: Int, pageSize: Int): List<NetworkMetric> {
+        // Calculate the offset for the database query based on the page number and size
+        val offset = page * pageSize
+        return networkMetricDao.getMetricsPaged(limit = pageSize, offset = offset)
     }
 
     override suspend fun insertMetric(metric: NetworkMetric) {

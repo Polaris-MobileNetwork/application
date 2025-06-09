@@ -36,7 +36,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.iust.polaris.MainActivity
 import com.iust.polaris.R
+import com.iust.polaris.common.ServiceStateHolder
+import com.iust.polaris.common.ServiceStatus
 import com.iust.polaris.data.local.NetworkMetric
+import com.iust.polaris.data.local.SettingsManager
 import com.iust.polaris.data.repository.NetworkMetricsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +48,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -58,10 +65,16 @@ class NetworkMetricService : Service() {
 
     @Inject
     lateinit var networkMetricsRepository: NetworkMetricsRepository
+    @Inject
+    lateinit var serviceStateHolder: ServiceStateHolder
+    @Inject
+    lateinit var settingsManager: SettingsManager
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var collectionJob: Job? = null
+    private var timerJob: Job? = null // Job for the duration timer
+    private var collectionStartTime: Long = 0L
 
     private lateinit var telephonyManager: TelephonyManager
     @Suppress("unused")
@@ -72,8 +85,9 @@ class NetworkMetricService : Service() {
         super.onCreate()
         Log.d(TAG, "Service onCreate()")
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        // Ensure state is correct on creation or if service is recreated
+        serviceStateHolder.updateStatus(ServiceStatus.STOPPED)
         createNotificationChannel()
         Log.d(TAG, "System services initialized.")
     }
@@ -83,6 +97,8 @@ class NetworkMetricService : Service() {
         when (intent?.action) {
             ACTION_START_COLLECTION -> {
                 Log.i(TAG, "ACTION_START_COLLECTION received.")
+                // Update state immediately to show the UI something is happening
+                serviceStateHolder.updateStatus(ServiceStatus.INITIALIZING)
                 startForegroundServiceWithNotification()
                 startMetricCollection()
             }
@@ -90,14 +106,10 @@ class NetworkMetricService : Service() {
                 Log.i(TAG, "ACTION_STOP_COLLECTION received.")
                 stopMetricCollection()
                 stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-                Log.i(TAG, "Service stopSelf() called.")
-            }
-            else -> {
-                Log.w(TAG, "Unknown or null action received in onStartCommand: ${intent?.action}")
+                stopSelf() // onDestroy will handle the final status update
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startForegroundServiceWithNotification() {
@@ -141,15 +153,32 @@ class NetworkMetricService : Service() {
             Log.d(TAG, "Metric collection job is already active.")
             return
         }
-        Log.i(TAG, "Starting metric collection loop (cellular focus).")
-        collectionJob = serviceScope.launch {
-            while (isActive) {
-                Log.d(TAG, "Collection loop: gathering cellular metrics.")
-                gatherAndStoreCellularMetricData()
-                delay(COLLECTION_INTERVAL_MS)
+        Log.i(TAG, "Starting metric collection loop with dynamic interval.")
+
+        // This is the new reactive way to handle the collection loop.
+        // It observes the interval setting and restarts the delay timer automatically if it changes.
+        collectionJob = settingsManager.collectionIntervalFlow
+            .flatMapLatest { intervalSeconds ->
+                // Create a new flow that emits a value at the specified interval
+                flow {
+                    while (true) {
+                        emit(Unit) // Emit a signal to trigger collection
+                        delay(intervalSeconds * 1000L) // Wait for the interval from settings
+                    }
+                }
             }
-            Log.i(TAG, "Metric collection loop ended (isActive is false).")
-        }
+            .onEach {
+                // This block is executed each time the interval flow emits.
+                Log.d(TAG, "Collection triggered by interval.")
+                gatherAndStoreCellularMetricData()
+            }
+            .launchIn(serviceScope) // Launch this reactive flow in the service's scope
+
+        // The old collection loop is replaced by the flow above.
+        // We still need to update the status and start the duration timer.
+        serviceStateHolder.updateStatus(ServiceStatus.COLLECTING)
+        startTimer()
+        Log.i(TAG, "Service state updated to COLLECTING.")
     }
 
     @SuppressLint("MissingPermission")
@@ -427,12 +456,43 @@ class NetworkMetricService : Service() {
         Log.i(TAG, "Stopping metric collection job.")
         collectionJob?.cancel()
         collectionJob = null
-        Log.d(TAG, "Metric collection job cancelled and set to null.")
+        stopTimer()
+        serviceStateHolder.updateStatus(ServiceStatus.STOPPED)
     }
 
     override fun onBind(intent: Intent): IBinder? {
         Log.d(TAG, "Service onBind()")
         return null
+    }
+
+    private fun startTimer() {
+        if (timerJob?.isActive == true) return
+        collectionStartTime = System.currentTimeMillis()
+        timerJob = serviceScope.launch {
+            Log.d(TAG, "Timer started.")
+            while (isActive) {
+                val elapsedSeconds = (System.currentTimeMillis() - collectionStartTime) / 1000
+                // Use the state holder to broadcast the new duration
+                serviceStateHolder.updateDuration(formatDuration(elapsedSeconds))
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopTimer() {
+        timerJob?.cancel()
+        timerJob = null
+        collectionStartTime = 0L
+        // Reset the duration in the state holder
+        serviceStateHolder.updateDuration("00:00:00")
+        Log.d(TAG, "Timer stopped and reset.")
+    }
+
+    private fun formatDuration(totalSeconds: Long): String {
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
     }
 
     override fun onDestroy() {
@@ -442,6 +502,7 @@ class NetworkMetricService : Service() {
         Log.d(TAG, "Service scope cancelled.")
         super.onDestroy()
     }
+
 
     companion object {
         const val ACTION_START_COLLECTION = "com.iust.polaris.service.action.START_COLLECTION"
@@ -453,11 +514,7 @@ class NetworkMetricService : Service() {
             val startIntent = Intent(context, NetworkMetricService::class.java).apply {
                 action = ACTION_START_COLLECTION
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(startIntent)
-            } else {
-                context.startService(startIntent)
-            }
+            context.startForegroundService(startIntent)
             Log.d(TAG, "Companion: startForegroundService/startService called.")
         }
 
