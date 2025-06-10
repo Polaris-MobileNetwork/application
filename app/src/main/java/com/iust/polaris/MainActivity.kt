@@ -12,10 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,19 +47,18 @@ import com.iust.polaris.ui.components.HandlePermissions
 import com.iust.polaris.ui.screens.MetricsCollectionScreen
 import com.iust.polaris.ui.screens.MetricsDisplayScreen
 import com.iust.polaris.ui.screens.SettingsScreen
+import com.iust.polaris.ui.screens.TestsScreen
 import com.iust.polaris.ui.theme.PolarisAppTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
-// Define all possible navigation destinations
 sealed class AppScreen(val route: String, val label: String, val icon: ImageVector? = null) {
     object Monitor : AppScreen("monitor", "Monitor", Icons.Filled.Home)
     object Metrics : AppScreen("metrics", "Metrics", Icons.Filled.List)
-    object Tests : AppScreen("tests", "Tests", Icons.Filled.ThumbUp)
-    object Settings : AppScreen("settings", "Settings") // Settings has no bottom nav icon
+    object Tests : AppScreen("tests", "Tests", Icons.Filled.Check)
+    object Settings : AppScreen("settings", "Settings")
 }
 
-// Define only the items that appear in the bottom navigation bar
 val bottomNavItems = listOf(
     AppScreen.Monitor,
     AppScreen.Metrics,
@@ -79,7 +78,8 @@ class MainActivity : ComponentActivity() {
         val requiredPermissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.READ_PHONE_STATE
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.SEND_SMS
         ).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 add(Manifest.permission.FOREGROUND_SERVICE_LOCATION)
@@ -90,10 +90,8 @@ class MainActivity : ComponentActivity() {
         }.toList()
 
         setContent {
-            // Collect the theme preference as state
             val themePreference by settingsManager.themePreferenceFlow.collectAsState(initial = "System")
 
-            // Determine if dark theme should be used
             val useDarkTheme = when (themePreference) {
                 "Light" -> false
                 "Dark" -> true
@@ -120,16 +118,13 @@ fun MainAppScaffold() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Determine the title based on the current route
     val currentScreen = bottomNavItems.find { it.route == currentDestination?.route }
         ?: if (currentDestination?.route == AppScreen.Settings.route) AppScreen.Settings else null
 
-    // Determine if the back arrow should be shown
     val canNavigateBack = currentDestination?.route == AppScreen.Settings.route
 
     Scaffold(
         topBar = {
-            // Using the standard TopAppBar directly
             TopAppBar(
                 title = { Text(if (canNavigateBack) currentScreen?.label ?: "Polaris" else "Polaris") },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -147,7 +142,6 @@ fun MainAppScaffold() {
                     }
                 },
                 actions = {
-                    // Show settings icon only on top-level screens
                     if (!canNavigateBack) {
                         IconButton(onClick = { navController.navigate(AppScreen.Settings.route) }) {
                             Icon(
@@ -160,7 +154,6 @@ fun MainAppScaffold() {
             )
         },
         bottomBar = {
-            // Only show the bottom bar for top-level destinations
             val isTopLevelDestination = currentDestination?.route in bottomNavItems.map { it.route }
             if (isTopLevelDestination) {
                 BottomNavigationBar(navController = navController, currentDestination = currentDestination)
@@ -208,7 +201,7 @@ fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
             MetricsDisplayScreen()
         }
         composable(AppScreen.Tests.route) {
-            PlaceholderScreen(text = "Tests Screen (Not Implemented)")
+            TestsScreen()
         }
         composable(AppScreen.Settings.route) {
             SettingsScreen()

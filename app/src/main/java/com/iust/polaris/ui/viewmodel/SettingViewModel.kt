@@ -15,7 +15,6 @@ class SettingsViewModel @Inject constructor(
     private val settingsManager: SettingsManager
 ) : ViewModel() {
 
-    // Expose the theme preference flow from the SettingsManager
     val themePreference: StateFlow<String> = settingsManager.themePreferenceFlow
         .stateIn(
             scope = viewModelScope,
@@ -23,7 +22,6 @@ class SettingsViewModel @Inject constructor(
             initialValue = "System"
         )
 
-    // Expose the collection interval flow
     val collectionInterval: StateFlow<Int> = settingsManager.collectionIntervalFlow
         .stateIn(
             scope = viewModelScope,
@@ -31,23 +29,20 @@ class SettingsViewModel @Inject constructor(
             initialValue = 15
         )
 
-    // --- New StateFlows for Sync Settings ---
     val autoSyncEnabled: StateFlow<Boolean> = settingsManager.autoSyncEnabledFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = true // Match the default in SettingsManager
+            initialValue = true
         )
 
     val syncInterval: StateFlow<Int> = settingsManager.syncIntervalFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
-            initialValue = 60 // Match the default in SettingsManager
+            initialValue = 60
         )
 
-
-    // --- Functions to Update Settings ---
 
     fun updateTheme(theme: String) {
         viewModelScope.launch {
@@ -61,14 +56,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    // New function to update auto-sync
     fun updateAutoSync(isEnabled: Boolean) {
         viewModelScope.launch {
             settingsManager.setAutoSyncEnabled(isEnabled)
         }
     }
 
-    // New function to update sync interval
     fun updateSyncInterval(intervalInMinutes: Int) {
         viewModelScope.launch {
             settingsManager.setSyncInterval(intervalInMinutes)

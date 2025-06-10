@@ -17,7 +17,6 @@ data class MetricsDisplayState(
     val items: List<NetworkMetric> = emptyList(),
     val isLoading: Boolean = false,
     val isPaginating: Boolean = false,
-    // The isRefreshing state is no longer needed for the UI if we remove pull-to-refresh
     val endReached: Boolean = false
 )
 
@@ -33,18 +32,12 @@ class MetricsDisplayViewModel @Inject constructor(
     private val pageSize = 20
 
     init {
-        // Load the initial data
         loadNextItems(isInitialLoad = true)
 
-        // --- FIX: Observe the database for changes and trigger a refresh ---
         viewModelScope.launch {
-            // This flow emits a new list whenever the DB changes.
             networkMetricsRepository.getAllMetricsFlow()
-                // We drop the first emission because the initial data is already being loaded by loadNextItems().
-                // This prevents a double-load on startup.
                 .drop(1)
                 .onEach {
-                    // When a change is detected, refresh the data.
                     refresh()
                 }
                 .collect {}
@@ -68,7 +61,6 @@ class MetricsDisplayViewModel @Inject constructor(
                 )
                 _uiState.update { currentState ->
                     currentState.copy(
-                        // If it's an initial load/refresh, replace the items. Otherwise, append.
                         items = if (isInitialLoad) newItems else currentState.items + newItems,
                         isLoading = false,
                         isPaginating = false,
@@ -83,7 +75,6 @@ class MetricsDisplayViewModel @Inject constructor(
     }
 
     private fun refresh() {
-        // Reset the state and load the first page again
         currentPage = 0
         _uiState.update { it.copy(items = emptyList(), endReached = false) }
         loadNextItems(isInitialLoad = true)
