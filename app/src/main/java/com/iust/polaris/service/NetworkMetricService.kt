@@ -15,6 +15,7 @@ import android.location.LocationManager
 import android.net.ConnectivityManager // Kept for potential future context
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
 import android.telephony.CellIdentityGsm
 import android.telephony.CellIdentityLte
 import android.telephony.CellIdentityNr
@@ -34,6 +35,13 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.iust.polaris.MainActivity
 import com.iust.polaris.R
 import com.iust.polaris.common.ServiceStateHolder
@@ -46,7 +54,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -73,20 +80,32 @@ class NetworkMetricService : Service() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var collectionJob: Job? = null
-    private var timerJob: Job? = null // Job for the duration timer
+    private var timerJob: Job? = null
     private var collectionStartTime: Long = 0L
 
     private lateinit var telephonyManager: TelephonyManager
-    @Suppress("unused")
-    private lateinit var connectivityManager: ConnectivityManager
     private lateinit var locationManager: LocationManager
+    private lateinit var localBroadcastManager: LocalBroadcastManager
+
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private var currentLocation: Location? = null
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(locationResult: LocationResult) {
+            super.onLocationResult(locationResult)
+            locationResult.lastLocation?.let {
+                currentLocation = it
+                Log.d(TAG, "New precise location received: ${it.latitude}, ${it.longitude}")
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service onCreate()")
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-        // Ensure state is correct on creation or if service is recreated
+        localBroadcastManager = LocalBroadcastManager.getInstance(this)
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         serviceStateHolder.updateStatus(ServiceStatus.STOPPED)
         createNotificationChannel()
         Log.d(TAG, "System services initialized.")
@@ -103,10 +122,7 @@ class NetworkMetricService : Service() {
                 startMetricCollection()
             }
             ACTION_STOP_COLLECTION -> {
-                Log.i(TAG, "ACTION_STOP_COLLECTION received.")
-                stopMetricCollection()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf() // onDestroy will handle the final status update
+                stopAndDestroyService()
             }
         }
         return START_STICKY
@@ -155,15 +171,13 @@ class NetworkMetricService : Service() {
         }
         Log.i(TAG, "Starting metric collection loop with dynamic interval.")
 
-        // This is the new reactive way to handle the collection loop.
-        // It observes the interval setting and restarts the delay timer automatically if it changes.
+        startLocationUpdates()
         collectionJob = settingsManager.collectionIntervalFlow
             .flatMapLatest { intervalSeconds ->
-                // Create a new flow that emits a value at the specified interval
                 flow {
                     while (true) {
-                        emit(Unit) // Emit a signal to trigger collection
-                        delay(intervalSeconds * 1000L) // Wait for the interval from settings
+                        emit(Unit)
+                        delay(intervalSeconds * 1000L)
                     }
                 }
             }
@@ -181,25 +195,54 @@ class NetworkMetricService : Service() {
         Log.i(TAG, "Service state updated to COLLECTING.")
     }
 
+    private fun stopAndDestroyService() {
+        Log.i(TAG, "Stop action received. Shutting down service.")
+        stopMetricCollection()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        if (!hasLocationPermission()) {
+            Log.w(TAG, "Cannot start location updates: Location permission not granted.")
+            return
+        }
+        val locationRequest = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Modern API for Android 12 (API 31) and newer
+            LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
+                .setMinUpdateIntervalMillis(2000L)
+                .build()
+        } else {
+            // Deprecated but required method for APIs below 31
+            @Suppress("DEPRECATION")
+            LocationRequest.create().apply {
+                priority = LocationRequest.PRIORITY_HIGH_ACCURACY
+                interval = 5000L
+                fastestInterval = 2000L
+            }
+        }
+
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
+        Log.i(TAG, "Requested continuous location updates.")
+    }
+
+    private fun stopLocationUpdates() {
+        fusedLocationClient.removeLocationUpdates(locationCallback)
+        Log.i(TAG, "Stopped continuous location updates.")
+    }
+
     @SuppressLint("MissingPermission")
     private suspend fun gatherAndStoreCellularMetricData() {
         Log.d(TAG, "gatherAndStoreCellularMetricData() called")
 
-        var currentLatitude: Double? = null
-        var currentLongitude: Double? = null
-        if (hasLocationPermission()) {
-            try {
-                val location: Location? = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    ?: locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                location?.let {
-                    currentLatitude = it.latitude
-                    currentLongitude = it.longitude
-                } ?: Log.w(TAG, "Location data not available (getLastKnownLocation returned null).")
-            } catch (e: SecurityException) { Log.e(TAG, "SecurityException getting location", e)
-            } catch (e: Exception) { Log.e(TAG, "Error getting location", e) }
-        } else {
-            Log.w(TAG, "Location permission not granted. Location data will be null.")
+        val latitude = currentLocation?.latitude
+        val longitude = currentLocation?.longitude
+
+        if (hasLocationPermission() && !isLocationEnabled()) {
+            localBroadcastManager.sendBroadcast(Intent(ACTION_REQUEST_ENABLE_LOCATION_SERVICES))
         }
+
 
         val cellularNetworkTypeString = getCellularNetworkTypeString()
         Log.d(TAG, "Cellular Network Type: $cellularNetworkTypeString")
@@ -324,8 +367,8 @@ class NetworkMetricService : Service() {
             timestamp = System.currentTimeMillis(),
             networkType = cellularNetworkTypeString,
             signalStrength = primarySignalStrength,
-            latitude = currentLatitude,
-            longitude = currentLongitude,
+            latitude = latitude,
+            longitude = longitude,
             cellId = cellIdString,
             plmnId = plmnIdString,
             lac = lacInt,
@@ -371,9 +414,16 @@ class NetworkMetricService : Service() {
         }
     }
 
+    private fun isLocationEnabled(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            locationManager.isLocationEnabled
+        } else {
+            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) || locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+        }
+    }
+
     private fun hasLocationPermission(): Boolean {
-        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        return ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun hasReadPhoneStatePermission(): Boolean {
@@ -456,6 +506,7 @@ class NetworkMetricService : Service() {
         Log.i(TAG, "Stopping metric collection job.")
         collectionJob?.cancel()
         collectionJob = null
+        stopLocationUpdates()
         stopTimer()
         serviceStateHolder.updateStatus(ServiceStatus.STOPPED)
     }
@@ -507,7 +558,7 @@ class NetworkMetricService : Service() {
     companion object {
         const val ACTION_START_COLLECTION = "com.iust.polaris.service.action.START_COLLECTION"
         const val ACTION_STOP_COLLECTION = "com.iust.polaris.service.action.STOP_COLLECTION"
-        private const val COLLECTION_INTERVAL_MS = 15000L
+        const val ACTION_REQUEST_ENABLE_LOCATION_SERVICES = "com.iust.polaris.service.action.REQUEST_ENABLE_LOCATION_SERVICES"
 
         fun startService(context: Context) {
             Log.i(TAG, "Companion: Attempting to start service.")

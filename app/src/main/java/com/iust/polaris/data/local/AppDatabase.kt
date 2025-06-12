@@ -12,10 +12,9 @@ import androidx.room.RoomDatabase
  * Version: The version of the database schema. If you change the schema (e.g., add a new
  * column or table), you MUST increment the version number and provide a migration strategy.
  */
-// --- UPDATED: Added Test & TestResult entities and incremented DB version ---
 @Database(
     entities = [NetworkMetric::class, Test::class, TestResult::class],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

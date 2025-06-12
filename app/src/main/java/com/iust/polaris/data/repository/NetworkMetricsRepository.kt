@@ -42,4 +42,11 @@ interface NetworkMetricsRepository {
      * Deletes all network metrics from the local data source.
      */
     suspend fun clearAllMetrics()
+
+    /**
+     * Fetches all unsynced data from the local database, sends it to the server,
+     * and marks it as synced upon success.
+     * @return True if the sync was successful, false otherwise.
+     */
+    suspend fun syncMetrics(): Boolean
 }

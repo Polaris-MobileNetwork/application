@@ -5,17 +5,20 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,30 +38,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.dialog
 import androidx.navigation.compose.rememberNavController
-import com.iust.polaris.data.local.SettingsManager
 import com.iust.polaris.ui.components.HandlePermissions
 import com.iust.polaris.ui.screens.MetricsCollectionScreen
 import com.iust.polaris.ui.screens.MetricsDisplayScreen
 import com.iust.polaris.ui.screens.SettingsScreen
 import com.iust.polaris.ui.screens.TestsScreen
 import com.iust.polaris.ui.theme.PolarisAppTheme
+import com.iust.polaris.ui.viewmodel.MetricsCollectionViewModel
 import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 
+// Define all possible navigation destinations
 sealed class AppScreen(val route: String, val label: String, val icon: ImageVector? = null) {
     object Monitor : AppScreen("monitor", "Monitor", Icons.Filled.Home)
     object Metrics : AppScreen("metrics", "Metrics", Icons.Filled.List)
     object Tests : AppScreen("tests", "Tests", Icons.Filled.Check)
-    object Settings : AppScreen("settings", "Settings")
+    object Settings : AppScreen("settings", "Settings") // Settings has no bottom nav icon
 }
 
+// Define only the items that appear in the bottom navigation bar
 val bottomNavItems = listOf(
     AppScreen.Monitor,
     AppScreen.Metrics,
@@ -67,10 +73,6 @@ val bottomNavItems = listOf(
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-
-    @Inject
-    lateinit var settingsManager: SettingsManager
-
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -78,8 +80,7 @@ class MainActivity : ComponentActivity() {
         val requiredPermissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.SEND_SMS
+            Manifest.permission.READ_PHONE_STATE
         ).apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 add(Manifest.permission.FOREGROUND_SERVICE_LOCATION)
@@ -90,14 +91,7 @@ class MainActivity : ComponentActivity() {
         }.toList()
 
         setContent {
-            val themePreference by settingsManager.themePreferenceFlow.collectAsState(initial = "System")
-
-            val useDarkTheme = when (themePreference) {
-                "Light" -> false
-                "Dark" -> true
-                else -> isSystemInDarkTheme()
-            }
-            PolarisAppTheme(darkTheme = useDarkTheme) {
+            PolarisAppTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -123,10 +117,14 @@ fun MainAppScaffold() {
 
     val canNavigateBack = currentDestination?.route == AppScreen.Settings.route
 
+    // Get the ViewModel here to control actions from the AppBar
+    val metricsViewModel: MetricsCollectionViewModel = hiltViewModel()
+    val metricsUiState by metricsViewModel.uiState.collectAsState()
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (canNavigateBack) currentScreen?.label ?: "Polaris" else "Polaris") },
+                title = { Text(currentScreen?.label ?: "Polaris") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface
@@ -134,20 +132,28 @@ fun MainAppScaffold() {
                 navigationIcon = {
                     if (canNavigateBack) {
                         IconButton(onClick = { navController.navigateUp() }) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back"
-                            )
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                         }
                     }
                 },
                 actions = {
+                    // Show Sync button only on Monitor screen
+                    if (currentScreen == AppScreen.Monitor) {
+                        if (metricsUiState.isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            IconButton(onClick = { metricsViewModel.onSyncClicked() }) {
+                                Icon(Icons.Filled.ThumbUp, "Sync")
+                            }
+                        }
+                    }
+                    // Show Settings button on all top-level screens
                     if (!canNavigateBack) {
                         IconButton(onClick = { navController.navigate(AppScreen.Settings.route) }) {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = "Settings"
-                            )
+                            Icon(Icons.Filled.Settings, "Settings")
                         }
                     }
                 }
@@ -195,6 +201,10 @@ fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
         modifier = modifier
     ) {
         composable(AppScreen.Monitor.route) {
+            // Because the NavHost is inside an @AndroidEntryPoint Activity,
+            // and the ViewModel is hoisted to MainAppScaffold, we pass it down.
+            // Or we can let it get its own instance with hiltViewModel() if it's meant to be scoped to this screen.
+            // For now, letting it get its own is simpler and correct.
             MetricsCollectionScreen()
         }
         composable(AppScreen.Metrics.route) {
@@ -203,8 +213,10 @@ fun AppNavHost(navController: NavHostController, modifier: Modifier = Modifier) 
         composable(AppScreen.Tests.route) {
             TestsScreen()
         }
-        composable(AppScreen.Settings.route) {
-            SettingsScreen()
+        dialog(AppScreen.Settings.route) {
+            Surface(modifier = Modifier.fillMaxSize()) {
+                SettingsScreen()
+            }
         }
     }
 }
