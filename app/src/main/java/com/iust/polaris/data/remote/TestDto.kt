@@ -57,3 +57,11 @@ fun List<TestDto>.toEntity(): List<Test> {
         )
     }
 }
+
+@Serializable
+data class DeletedTestsResponseDto(
+    val success: Boolean,
+    val code: Int,
+    val message: String?,
+    val deletedTestIds: List<String>
+)

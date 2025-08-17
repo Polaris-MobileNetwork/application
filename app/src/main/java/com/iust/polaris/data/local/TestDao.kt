@@ -50,4 +50,7 @@ interface TestDao {
 
     @Query("DELETE FROM tests")
     suspend fun clearAllTests()
+
+    @Query("DELETE FROM tests WHERE serverAssignedId IN (:serverIds)")
+    suspend fun deleteTestsByServerIds(serverIds: List<String>)
 }

@@ -2,6 +2,7 @@ package com.iust.polaris.data.remote
 
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
 
 interface ApiService {
@@ -22,5 +23,8 @@ interface ApiService {
      */
     @POST("/api/TestResult/SaveMultiple") // Endpoint from your specification
     suspend fun syncTestResults(@Body request: TestResultSyncRequestDto): Response<Unit>
+
+    @GET("/api/Test/deleted")
+    suspend fun getDeletedTestIds(): Response<DeletedTestsResponseDto>
 
 }

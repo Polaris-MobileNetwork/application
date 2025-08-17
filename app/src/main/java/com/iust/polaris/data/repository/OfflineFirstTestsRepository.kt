@@ -40,28 +40,42 @@ class OfflineFirstTestsRepository(
      * Syncs the local test configurations with the server.
      */
     override suspend fun syncTests(): Boolean {
-        Log.d(TAG, "Starting test sync process...")
-        return try {
-            val existingIds = testDao.getAllServerAssignedIds()
-            Log.d(TAG, "Sending ${existingIds.size} existing IDs to server.")
-            val response = apiService.getTests(TestSyncRequestDto(excludedIds = existingIds))
+        Log.d(TAG, "Starting full test sync process...")
+        try {
+            // Step 1: Sync and process deletions
+            val deleteResponse = apiService.getDeletedTestIds()
+            if (deleteResponse.isSuccessful && deleteResponse.body()?.success == true) {
+                val deletedIds = deleteResponse.body()?.deletedTestIds
+                if (!deletedIds.isNullOrEmpty()) {
+                    Log.i(TAG, "Received ${deletedIds.size} deleted test IDs from server. Removing locally.")
+                    testDao.deleteTestsByServerIds(deletedIds)
+                }
+            } else {
+                Log.e(TAG, "Failed to fetch deleted test IDs. Code: ${deleteResponse.code()}")
+                // We can decide to continue or fail here. For now, we'll continue.
+            }
 
-            if (response.isSuccessful && response.body()?.success == true) {
-                val newTestsDto = response.body()?.tests
+            // Step 2: Fetch new/updated tests
+            val existingIds = testDao.getAllServerAssignedIds()
+            Log.d(TAG, "Sending ${existingIds.size} existing IDs to server to fetch new tests.")
+            val getTestsResponse = apiService.getTests(TestSyncRequestDto(excludedIds = existingIds))
+
+            if (getTestsResponse.isSuccessful && getTestsResponse.body()?.success == true) {
+                val newTestsDto = getTestsResponse.body()?.tests
                 if (newTestsDto.isNullOrEmpty()) {
-                    Log.i(TAG, "Test sync successful, no new tests received.")
+                    Log.i(TAG, "No new tests to add.")
                 } else {
-                    Log.i(TAG, "Test sync successful, received ${newTestsDto.size} new/updated tests.")
+                    Log.i(TAG, "Received ${newTestsDto.size} new/updated tests.")
                     testDao.insertOrUpdateTests(newTestsDto.toEntity())
                 }
-                true
+                return true // Overall sync process is successful
             } else {
-                Log.e(TAG, "Test sync API call failed with code: ${response.code()} - ${response.message()}")
-                true
+                Log.e(TAG, "Failed to fetch new tests. Code: ${getTestsResponse.code()}")
+                return false // Sync failed at this step
             }
         } catch (e: Exception) {
             Log.e(TAG, "Test sync failed due to an exception.", e)
-            false
+            return false
         }
     }
 
