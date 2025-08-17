@@ -14,4 +14,13 @@ interface ApiService {
     @POST("/api/NetworkMeasurement/SaveMultiple")
     suspend fun syncMeasurements(@Body syncRequest: SyncRequestDto): Response<Unit>
 
+    @POST("/api/Test/except")
+    suspend fun getTests(@Body request: TestSyncRequestDto): Response<TestSyncResponseDto>
+
+    /**
+     * Sends a batch of test results to the server.
+     */
+    @POST("/api/TestResult/SaveMultiple") // Endpoint from your specification
+    suspend fun syncTestResults(@Body request: TestResultSyncRequestDto): Response<Unit>
+
 }

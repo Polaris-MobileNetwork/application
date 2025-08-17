@@ -3,6 +3,7 @@ package com.iust.polaris.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.iust.polaris.data.local.SettingsManager
+import com.iust.polaris.service.TestResultSyncScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -12,7 +13,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val settingsManager: SettingsManager
+    private val settingsManager: SettingsManager,
+    private val testResultSyncScheduler: TestResultSyncScheduler
 ) : ViewModel() {
 
     val themePreference: StateFlow<String> = settingsManager.themePreferenceFlow
@@ -53,12 +55,14 @@ class SettingsViewModel @Inject constructor(
     fun updateCollectionInterval(intervalInSeconds: Int) {
         viewModelScope.launch {
             settingsManager.setCollectionInterval(intervalInSeconds)
+            testResultSyncScheduler.scheduleOrCancelSync()
         }
     }
 
     fun updateAutoSync(isEnabled: Boolean) {
         viewModelScope.launch {
             settingsManager.setAutoSyncEnabled(isEnabled)
+            testResultSyncScheduler.scheduleOrCancelSync()
         }
     }
 

@@ -1,64 +1,119 @@
 package com.iust.polaris.data.repository
 
+import android.util.Log
 import com.iust.polaris.data.local.Test
 import com.iust.polaris.data.local.TestDao
 import com.iust.polaris.data.local.TestResult
 import com.iust.polaris.data.local.TestResultDao
+import com.iust.polaris.data.remote.ApiService
+import com.iust.polaris.data.remote.TestResultDto
+import com.iust.polaris.data.remote.TestResultSyncRequestDto
+import com.iust.polaris.data.remote.TestSyncRequestDto
+import com.iust.polaris.data.remote.toEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 
+private const val TAG = "TestsRepository"
+
 /**
  * Concrete implementation of [TestsRepository] that uses a local Room database
- * as its data source.
+ * and a remote Retrofit service.
  */
 class OfflineFirstTestsRepository(
     private val testDao: TestDao,
-    private val testResultDao: TestResultDao
+    private val testResultDao: TestResultDao,
+    private val apiService: ApiService
 ) : TestsRepository {
 
-    override fun getManualTests(): Flow<List<Test>> {
-        return testDao.getManualTests()
+    override fun getManualTests(): Flow<List<Test>> = testDao.getManualTests()
+    override fun getPendingScheduledTests(): Flow<List<Test>> = testDao.getPendingScheduledTests(System.currentTimeMillis())
+    override fun getCompletedTests(): Flow<List<Test>> = testDao.getCompletedTests()
+    override fun getPeriodicTestsFlow(): Flow<List<Test>> = testDao.getPeriodicTestsFlow()
+    override suspend fun getPeriodicTests(): List<Test> = testDao.getPeriodicTests()
+    override suspend fun getDueScheduledTests(): List<Test> = testDao.getDueScheduledTests(System.currentTimeMillis())
+    override suspend fun getTestById(localTestId: Long): Test? = testDao.getTestById(localTestId)
+    override suspend fun markTestAsCompleted(localTestId: Long) = testDao.markTestAsCompleted(localTestId)
+    override fun getResultsForTest(localTestId: Long): Flow<List<TestResult>> = testResultDao.getResultsForTest(localTestId)
+    override suspend fun insertTestResult(result: TestResult) = testResultDao.insertTestResult(result)
+
+    /**
+     * Syncs the local test configurations with the server.
+     */
+    override suspend fun syncTests(): Boolean {
+        Log.d(TAG, "Starting test sync process...")
+        return try {
+            val existingIds = testDao.getAllServerAssignedIds()
+            Log.d(TAG, "Sending ${existingIds.size} existing IDs to server.")
+            val response = apiService.getTests(TestSyncRequestDto(excludedIds = existingIds))
+
+            if (response.isSuccessful && response.body()?.success == true) {
+                val newTestsDto = response.body()?.tests
+                if (newTestsDto.isNullOrEmpty()) {
+                    Log.i(TAG, "Test sync successful, no new tests received.")
+                } else {
+                    Log.i(TAG, "Test sync successful, received ${newTestsDto.size} new/updated tests.")
+                    testDao.insertOrUpdateTests(newTestsDto.toEntity())
+                }
+                true
+            } else {
+                Log.e(TAG, "Test sync API call failed with code: ${response.code()} - ${response.message()}")
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Test sync failed due to an exception.", e)
+            false
+        }
     }
 
-    override fun getPendingScheduledTests(): Flow<List<Test>> {
-        return testDao.getPendingScheduledTests(System.currentTimeMillis())
-    }
+    override suspend fun syncTestResults(): Boolean {
+        Log.d(TAG, "Starting test result sync process...")
+        val unsyncedResults = testResultDao.getUnsyncedResults()
 
-    override fun getCompletedTests(): Flow<List<Test>> {
-        return testDao.getCompletedTests()
-    }
+        if (unsyncedResults.isEmpty()) {
+            Log.d(TAG, "No test results to sync.")
+            return true // Nothing to do, so sync is "successful"
+        }
 
-    // --- NEWLY IMPLEMENTED to return a Flow ---
-    override fun getPeriodicTestsFlow(): Flow<List<Test>> {
-        return testDao.getPeriodicTestsFlow()
-    }
+        Log.d(TAG, "Found ${unsyncedResults.size} test results to sync.")
 
-    // --- NEWLY IMPLEMENTED suspend fun ---
-    override suspend fun getPeriodicTests(): List<Test> {
-        return testDao.getPeriodicTests()
-    }
+        // Convert local entities to DTOs for the API request
+        val resultsDto = unsyncedResults.map { result ->
+            TestResultDto(
+                timestamp = result.timestamp,
+                testType = result.testType,
+                targetHost = result.targetHost,
+                resultValue = result.resultValue,
+                isSuccess = result.isSuccess,
+                details = result.details,
+                serverTestId = result.serverTestId
+            )
+        }
 
+        val syncRequest = TestResultSyncRequestDto(testResults = resultsDto)
 
-    override suspend fun getDueScheduledTests(): List<Test> {
-        return testDao.getDueScheduledTests(System.currentTimeMillis())
-    }
-
-    override suspend fun getTestById(localTestId: Long): Test? {
-        return testDao.getTestById(localTestId)
-    }
-
-    override suspend fun markTestAsCompleted(localTestId: Long) {
-        testDao.markTestAsCompleted(localTestId)
+        return try {
+            val response = apiService.syncTestResults(syncRequest)
+            if (response.isSuccessful) {
+                Log.i(TAG, "Test result sync API call successful. Marking results as uploaded.")
+                val idsToUpdate = unsyncedResults.map { it.id }
+                testResultDao.markResultsAsUploaded(idsToUpdate)
+                true
+            } else {
+                Log.e(TAG, "Test result sync API call failed with code: ${response.code()} - ${response.message()}")
+                false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Test result sync failed due to an exception.", e)
+            false
+        }
     }
 
     /**
      * Populates the database with initial data.
-     * - Ensures a default set of manual tests exist without duplicating them.
-     * - Ensures a default periodic test exists.
-     * - Appends a new unique scheduled test to simulate receiving one from a server.
+     * This now only ensures default manual tests exist and then triggers a sync.
      */
     override suspend fun populateInitialMockTests() {
-        // --- Logic for ensuring default manual tests exist ---
+        // Ensure default manual tests exist without duplicating them.
         val manualTestsTemplate = listOf(
             Test(
                 name = "Ping Google DNS",
@@ -74,66 +129,19 @@ class OfflineFirstTestsRepository(
                 name = "Web Page Load",
                 type = "WEB",
                 parametersJson = """{"url": "https://www.google.com"}"""
-            ),
-            Test(
-                name = "Download Speed Test (100MB)",
-                type = "DOWNLOAD_SPEED",
-                parametersJson = """{"url": "https://fsn1-speed.hetzner.com/100MB.bin"}"""
-            ),
-            Test(
-                name = "Upload Speed Test (1MB)",
-                type = "UPLOAD_SPEED",
-                parametersJson = """{"url": "https://httpbin.org/post", "size_kb": 1024}"""
-            ),
-            Test(
-                name = "Send Test SMS",
-                type = "SMS",
-                // Note: The recipient number should be valid for a real test.
-                parametersJson = """{"recipient": "+989133559810", "message": "Polaris connectivity test message"}"""
             )
         )
 
         val existingManualTests = testDao.getManualTests().first()
-        val manualTestsToInsert = manualTestsTemplate.filter { template ->
+        val testsToInsert = manualTestsTemplate.filter { template ->
             existingManualTests.none { existing -> existing.name == template.name }
         }
 
-        if (manualTestsToInsert.isNotEmpty()) {
-            testDao.insertOrUpdateTests(manualTestsToInsert)
+        if (testsToInsert.isNotEmpty()) {
+            testDao.insertOrUpdateTests(testsToInsert)
         }
 
-        // --- Logic for ensuring a default periodic test exists ---
-        val periodicTestTemplate = Test(
-            name = "Periodic Ping (Every 15 mins)",
-            type = "PING",
-            parametersJson = """{"host": "1.1.1.1", "count": 2}""",
-            intervalSeconds = 900 // 15 minutes
-        )
-        val existingPeriodicTests = testDao.getPeriodicTests()
-        if (existingPeriodicTests.none { it.name == periodicTestTemplate.name }) {
-            testDao.insertOrUpdateTests(listOf(periodicTestTemplate))
-        }
-
-
-        // --- Logic for appending a new scheduled test ---
-        val now = System.currentTimeMillis()
-        val scheduledTime = now + (2 * 60 * 1000) // 2 minutes from now
-
-        val newScheduledTest = Test(
-            name = "Scheduled Ping @ ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date(scheduledTime))}",
-            type = "PING",
-            parametersJson = """{"host": "iust.ac.ir", "count": 2}""",
-            scheduledTimestamp = scheduledTime
-        )
-
-        testDao.insertOrUpdateTests(listOf(newScheduledTest))
-    }
-
-    override fun getResultsForTest(localTestId: Long): Flow<List<TestResult>> {
-        return testResultDao.getResultsForTest(localTestId)
-    }
-
-    override suspend fun insertTestResult(result: TestResult) {
-        testResultDao.insertTestResult(result)
+        // Trigger a sync to get any scheduled or periodic tests from the server.
+        syncTests()
     }
 }

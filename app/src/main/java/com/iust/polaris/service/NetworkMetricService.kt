@@ -49,6 +49,7 @@ import com.iust.polaris.common.ServiceStatus
 import com.iust.polaris.data.local.NetworkMetric
 import com.iust.polaris.data.local.SettingsManager
 import com.iust.polaris.data.repository.NetworkMetricsRepository
+import com.iust.polaris.data.repository.TestsRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -76,12 +77,17 @@ class NetworkMetricService : Service() {
     lateinit var serviceStateHolder: ServiceStateHolder
     @Inject
     lateinit var settingsManager: SettingsManager
+    @Inject
+    lateinit var testsRepository: TestsRepository
+    @Inject
+    lateinit var testExecutor: TestExecutor
 
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var collectionJob: Job? = null
     private var timerJob: Job? = null
     private var collectionStartTime: Long = 0L
+    private var periodicTestJob: Job? = null
 
     private lateinit var telephonyManager: TelephonyManager
     private lateinit var locationManager: LocationManager
@@ -172,6 +178,7 @@ class NetworkMetricService : Service() {
         Log.i(TAG, "Starting metric collection loop with dynamic interval.")
 
         startLocationUpdates()
+        startPeriodicTestRunner()
         collectionJob = settingsManager.collectionIntervalFlow
             .flatMapLatest { intervalSeconds ->
                 flow {
@@ -198,8 +205,46 @@ class NetworkMetricService : Service() {
     private fun stopAndDestroyService() {
         Log.i(TAG, "Stop action received. Shutting down service.")
         stopMetricCollection()
+        stopPeriodicTestRunner()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun startPeriodicTestRunner() {
+        if (periodicTestJob?.isActive == true) return
+
+        // This map will store the last execution time for each periodic test
+        val lastExecutionTimes = mutableMapOf<Long, Long>()
+
+        periodicTestJob = serviceScope.launch {
+            while (isActive) {
+                val periodicTests = testsRepository.getPeriodicTests()
+                val currentTime = System.currentTimeMillis()
+
+                for (test in periodicTests) {
+                    val lastRun = lastExecutionTimes[test.id] ?: 0L
+                    val intervalMillis = (test.intervalSeconds ?: 0) * 1000L
+
+                    if (intervalMillis > 0 && currentTime - lastRun >= intervalMillis) {
+                        Log.i(TAG, "Executing periodic test: ${test.name}")
+                        // We don't need to wait for the test to finish,
+                        // launch it in its own coroutine so multiple tests can run if needed.
+                        launch {
+                            val result = testExecutor.execute(test)
+                            testsRepository.insertTestResult(result)
+                        }
+                        lastExecutionTimes[test.id] = currentTime
+                    }
+                }
+                // Check for due periodic tests every minute
+                delay(60 * 1000L)
+            }
+        }
+    }
+
+    private fun stopPeriodicTestRunner() {
+        periodicTestJob?.cancel()
+        periodicTestJob = null
     }
 
     @SuppressLint("MissingPermission")

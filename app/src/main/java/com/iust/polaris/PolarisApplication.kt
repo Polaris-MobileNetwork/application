@@ -3,9 +3,14 @@ package com.iust.polaris
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.iust.polaris.service.TestResultSyncScheduler
 import com.iust.polaris.service.TestScheduler
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Custom Application class for Hilt setup.
@@ -16,16 +21,24 @@ import javax.inject.Inject
 @HiltAndroidApp
 class PolarisApplication : Application(), Configuration.Provider {
 
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
     lateinit var testScheduler: TestScheduler
 
+    @Inject
+    lateinit var  testResultSyncScheduler: TestResultSyncScheduler
+
     override fun onCreate() {
         super.onCreate()
         // Schedule the periodic worker when the application starts.
         testScheduler.schedulePeriodicTests()
+        applicationScope.launch {
+            testResultSyncScheduler.scheduleOrCancelSync()
+        }
     }
 
     /**

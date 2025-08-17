@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,8 +29,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,12 +44,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.iust.polaris.R
 import com.iust.polaris.data.local.Test
 import com.iust.polaris.data.local.TestResult
 import com.iust.polaris.ui.viewmodel.TestItemUiState
+import com.iust.polaris.ui.viewmodel.TestsScreenState
 import com.iust.polaris.ui.viewmodel.TestsViewModel
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -56,70 +65,152 @@ fun TestsScreen(
     viewModel: TestsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    if (uiState.isLoading) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+    LaunchedEffect(Unit) {
+        viewModel.snackbarEvents.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
-    } else {
-        LazyColumn(
-            modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+    }
+
+    Scaffold (
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+    ) {
+            _ ->
+        Column(modifier = modifier.fillMaxSize()) {
+            // --- NEW: Header for Sync Buttons ---
+            SyncHeader(
+                isSyncingTests = uiState.isSyncing,
+                isSyncingResults = uiState.isSyncingResults,
+                onSyncTests = { viewModel.onSyncTestsClicked() },
+                onSyncResults = { viewModel.onSyncTestResultsClicked() }
+            )
+
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (uiState.isLoading) {
+                    CircularProgressIndicator()
+                } else if (uiState.manualTests.isEmpty() && uiState.periodicTests.isEmpty() && uiState.pendingTests.isEmpty() && uiState.completedTests.isEmpty()) {
+                    Text(
+                        text = "No tests available. Try syncing.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Manual Tests Section
+                        if (uiState.manualTests.isNotEmpty()) {
+                            item { SectionHeader("Manual Tests") }
+                            items(uiState.manualTests, key = { "manual-${it.test.id}" }) { item ->
+                                TestItemCard(
+                                    testItemState = item,
+                                    isRunning = uiState.runningTestId == item.test.id,
+                                    onRunTest = { viewModel.runTest(item.test) },
+                                    viewModel = viewModel
+                                )
+                            }
+                        }
+
+                        // Periodic Tests Section
+                        if (uiState.periodicTests.isNotEmpty()) {
+                            item { SectionHeader("Periodic Tests", Modifier.padding(top = 16.dp)) }
+                            items(
+                                uiState.periodicTests,
+                                key = { "periodic-${it.test.id}" }) { item ->
+                                TestItemCard(
+                                    testItemState = item,
+                                    isRunning = uiState.runningTestId == item.test.id,
+                                    onRunTest = { viewModel.runTest(item.test) }, // Allow manual trigger
+                                    viewModel = viewModel
+                                )
+                            }
+                        }
+
+                        // Pending Scheduled Tests Section
+                        if (uiState.pendingTests.isNotEmpty()) {
+                            item {
+                                SectionHeader(
+                                    "Pending Scheduled Tests",
+                                    Modifier.padding(top = 16.dp)
+                                )
+                            }
+                            items(uiState.pendingTests, key = { "pending-${it.test.id}" }) { item ->
+                                TestItemCard(
+                                    testItemState = item,
+                                    isRunning = uiState.runningTestId == item.test.id,
+                                    onRunTest = {},
+                                    showRunButton = false, // Don't show run button for pending tests
+                                    viewModel = viewModel
+                                )
+                            }
+                        }
+
+                        // Completed Tests Section
+                        if (uiState.completedTests.isNotEmpty()) {
+                            item { SectionHeader("Completed Tests", Modifier.padding(top = 16.dp)) }
+                            items(
+                                uiState.completedTests,
+                                key = { "completed-${it.test.id}" }) { item ->
+                                TestItemCard(
+                                    testItemState = item,
+                                    isRunning = false,
+                                    onRunTest = {},
+                                    showRunButton = false,
+                                    viewModel = viewModel
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SyncHeader(
+    isSyncingTests: Boolean,
+    isSyncingResults: Boolean,
+    onSyncTests: () -> Unit,
+    onSyncResults: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedButton(
+            onClick = onSyncTests,
+            enabled = !isSyncingTests && !isSyncingResults,
+            modifier = Modifier.weight(1f)
         ) {
-            // Manual Tests Section
-            if (uiState.manualTests.isNotEmpty()) {
-                item { SectionHeader("Manual Tests") }
-                items(uiState.manualTests, key = { "manual-${it.test.id}" }) { item ->
-                    TestItemCard(
-                        testItemState = item,
-                        isRunning = uiState.runningTestId == item.test.id,
-                        onRunTest = { viewModel.runTest(item.test) },
-                        viewModel = viewModel
-                    )
-                }
+            if (isSyncingTests) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                Icon(Icons.Default.Refresh, "Sync Tests")
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Sync Tests")
             }
-
-            // Periodic Tests Section
-            if (uiState.periodicTests.isNotEmpty()) {
-                item { SectionHeader("Periodic Tests", Modifier.padding(top = 16.dp)) }
-                items(uiState.periodicTests, key = { "periodic-${it.test.id}" }) { item ->
-                    TestItemCard(
-                        testItemState = item,
-                        isRunning = uiState.runningTestId == item.test.id,
-                        onRunTest = {},
-                        showRunButton = false,
-                        viewModel = viewModel
-                    )
-                }
-            }
-
-            // Pending Scheduled Tests Section
-            if (uiState.pendingTests.isNotEmpty()) {
-                item { SectionHeader("Pending Scheduled Tests", Modifier.padding(top = 16.dp)) }
-                items(uiState.pendingTests, key = { "pending-${it.test.id}" }) { item ->
-                    TestItemCard(
-                        testItemState = item,
-                        isRunning = uiState.runningTestId == item.test.id,
-                        onRunTest = {},
-                        showRunButton = false, // Don't show run button for pending tests
-                        viewModel = viewModel
-                    )
-                }
-            }
-
-            // Completed Tests Section
-            if (uiState.completedTests.isNotEmpty()) {
-                item { SectionHeader("Completed Tests", Modifier.padding(top = 16.dp)) }
-                items(uiState.completedTests, key = { "completed-${it.test.id}" }) { item ->
-                    TestItemCard(
-                        testItemState = item,
-                        isRunning = false,
-                        onRunTest = {},
-                        showRunButton = false,
-                        viewModel = viewModel
-                    )
-                }
+        }
+        OutlinedButton(
+            onClick = onSyncResults,
+            enabled = !isSyncingTests && !isSyncingResults,
+            modifier = Modifier.weight(1f)
+        ) {
+            if (isSyncingResults) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp))
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.ic_cloud),
+                    contentDescription = "Sync Now"
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Upload Results")
             }
         }
     }
@@ -209,12 +300,12 @@ fun TestItemSummary(testItemState: TestItemUiState) {
             detailsText = "Last: ${testItemState.latestResult.resultValue} on ${sdf.format(Date(testItemState.latestResult.timestamp))}"
             detailsColor = if (testItemState.latestResult.isSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
         }
-        testItemState.test.intervalSeconds != null -> {
-            detailsText = "Runs periodically (every ${testItemState.test.intervalSeconds / 60} mins)"
-            detailsColor = MaterialTheme.colorScheme.onSurfaceVariant
-        }
         testItemState.test.scheduledTimestamp != null -> {
             detailsText = "Scheduled for: ${sdf.format(Date(testItemState.test.scheduledTimestamp))}"
+            detailsColor = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        testItemState.test.intervalSeconds != null -> {
+            detailsText = "Runs periodically (every ${testItemState.test.intervalSeconds / 60} mins)"
             detailsColor = MaterialTheme.colorScheme.onSurfaceVariant
         }
         else -> {
@@ -236,13 +327,18 @@ fun TestDetails(
     Divider(modifier = Modifier.padding(horizontal = 16.dp))
     Column(modifier = Modifier.padding(16.dp)) {
         Text("Details", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        val params = JSONObject(test.parametersJson)
-        params.keys().forEach { key ->
-            Text("• $key: ${params.getString(key)}", style = MaterialTheme.typography.bodyMedium)
-        }
+//        val params = JSONObject(test.parametersJson)
+//        params.keys().forEach { key ->
+//            Text("• $key: ${params.getString(key)}", style = MaterialTheme.typography.bodyMedium)
+//        }
 
         Spacer(modifier = Modifier.height(16.dp))
         Text("History", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+
+        if (isRunning) {
+            SkeletonResultItem()
+            Spacer(modifier = Modifier.height(4.dp))
+        }
 
         if (resultHistory.isEmpty()) {
             if (!isRunning) {
@@ -265,5 +361,14 @@ fun TextResultItem(result: TestResult) {
         text = "• ${sdf.format(Date(result.timestamp))}: ${result.resultValue}",
         style = MaterialTheme.typography.bodyMedium,
         color = color
+    )
+}
+
+@Composable
+fun SkeletonResultItem() {
+    Text(
+        text = "• Running test...",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.primary
     )
 }

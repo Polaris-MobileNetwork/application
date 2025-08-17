@@ -49,4 +49,6 @@ interface NetworkMetricsRepository {
      * @return True if the sync was successful, false otherwise.
      */
     suspend fun syncMetrics(): Boolean
+
+     fun getUnsyncedMetricsCount(): Flow<Int>
 }

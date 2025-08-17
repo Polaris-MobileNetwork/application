@@ -75,4 +75,8 @@ class OfflineFirstNetworkMetricsRepository(
             false
         }
     }
+
+    override fun getUnsyncedMetricsCount(): Flow<Int> {
+        return networkMetricDao.getUnsyncedMetricsCount()
+    }
 }

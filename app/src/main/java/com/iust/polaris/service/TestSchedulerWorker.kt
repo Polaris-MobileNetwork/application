@@ -20,35 +20,28 @@ class TestSchedulerWorker @AssistedInject constructor(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
-        Log.d(TAG, "Worker starting: Checking for all due and periodic tests.")
+        Log.d(TAG, "Worker starting: Checking for ONE-TIME due scheduled tests.")
         return try {
-            // Fetch both one-time due tests and all periodic tests
-            val dueScheduledTests = testsRepository.getDueScheduledTests()
-            val periodicTests = testsRepository.getPeriodicTests()
-            val allTestsToRun = dueScheduledTests + periodicTests
+            // --- UPDATED: Only fetch and run one-time scheduled tests ---
+            val dueTests = testsRepository.getDueScheduledTests()
 
-            if (allTestsToRun.isEmpty()) {
-                Log.d(TAG, "No due or periodic tests to run at this time.")
+            if (dueTests.isEmpty()) {
+                Log.d(TAG, "No due one-time tests found.")
                 return Result.success()
             }
 
-            Log.i(TAG, "Found ${allTestsToRun.size} test(s) to run: ${dueScheduledTests.size} scheduled, ${periodicTests.size} periodic.")
+            Log.i(TAG, "Found ${dueTests.size} due one-time test(s). Executing now...")
 
-            // Execute each test
-            for (test in allTestsToRun) {
+            for (test in dueTests) {
                 Log.d(TAG, "Executing test: ${test.name} (ID: ${test.id})")
                 val result = testExecutor.execute(test)
                 testsRepository.insertTestResult(result)
-
-                // IMPORTANT: Only mark one-time scheduled tests as completed.
-                // Periodic tests should remain incomplete to run again.
-                if (test.scheduledTimestamp != null) {
-                    testsRepository.markTestAsCompleted(test.id)
-                    Log.d(TAG, "Marked one-time scheduled test as completed: ${test.name}")
-                }
+                // Mark the test as completed so it doesn't run again
+                testsRepository.markTestAsCompleted(test.id)
+                Log.i(TAG, "Finished test: ${test.name}. Result: ${result.resultValue}")
             }
 
-            Log.i(TAG, "All due and periodic tests executed successfully.")
+            Log.i(TAG, "All due one-time tests executed successfully.")
             Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "An error occurred during scheduled test execution.", e)

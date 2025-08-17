@@ -32,4 +32,7 @@ interface NetworkMetricDao {
 
     @Query("UPDATE network_metrics SET isUploaded = 1 WHERE id IN (:ids)")
     suspend fun markMetricsAsUploaded(ids: List<Long>)
+
+    @Query("SELECT COUNT(*) FROM network_metrics WHERE isUploaded = 0")
+    fun getUnsyncedMetricsCount(): Flow<Int>
 }

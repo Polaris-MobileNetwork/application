@@ -57,8 +57,8 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideTestsRepository(testDao: TestDao, testResultDao: TestResultDao): TestsRepository {
-        return OfflineFirstTestsRepository(testDao, testResultDao)
+    fun provideTestsRepository(testDao: TestDao, apiService: ApiService, testResultDao: TestResultDao): TestsRepository {
+        return OfflineFirstTestsRepository(testDao, testResultDao, apiService)
     }
 
     @Provides

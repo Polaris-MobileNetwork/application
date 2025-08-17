@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,24 +33,65 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.iust.polaris.R
+import com.iust.polaris.common.ServiceStatus
 import com.iust.polaris.ui.theme.status_success_light
 import com.iust.polaris.ui.viewmodel.MainScreenUiState
+import com.iust.polaris.ui.viewmodel.MainUiState
 import com.iust.polaris.ui.viewmodel.MetricsCollectionViewModel
 
 @Composable
 fun MetricsCollectionScreen(
-    viewModel: MetricsCollectionViewModel = hiltViewModel()
+    uiState: MainUiState,
+    onToggleCollection: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val uiState by viewModel.uiState.collectAsState()
 
     // A simple Scaffold without an AppBar to host the main content.
-    Scaffold { paddingValues ->
-        MainScreenContent(
+    Box(
+        modifier = modifier.fillMaxSize(),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Main Start/Stop/Loading button
+            ServiceControlButton(
+                isCollecting = uiState.serviceStatus == ServiceStatus.COLLECTING,
+                isInitializing = uiState.isServiceInitializing,
+                onClick = onToggleCollection
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Status Text below the button
+            Text(
+                text = uiState.serviceStatusText,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // Timer display, only visible when collecting
+            if (uiState.serviceStatus == com.iust.polaris.common.ServiceStatus.COLLECTING) {
+                Text(
+                    text = uiState.collectionDuration,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Light,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                Spacer(modifier = Modifier.height(64.dp))
+            }
+        }
+
+        // --- NEW: Status card at the bottom ---
+        SyncStatusCard(
+            lastSyncStatus = uiState.lastSyncStatus,
+            unsyncedCount = uiState.unsyncedMetricsCount,
             modifier = Modifier
-                .padding(paddingValues)
-                .fillMaxSize(),
-            uiState = uiState,
-            onToggleCollection = viewModel::onToggleCollection
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
         )
     }
 }
@@ -162,6 +204,40 @@ fun ServiceControlButton(
                         tint = animatedIconColor // Use the animated color for the icon's tint
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun SyncStatusCard(
+    lastSyncStatus: String,
+    unsyncedCount: Int,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text("Sync Status", style = MaterialTheme.typography.labelMedium)
+                Text(lastSyncStatus, style = MaterialTheme.typography.bodyMedium)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("Unsynced", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = unsyncedCount.toString(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
