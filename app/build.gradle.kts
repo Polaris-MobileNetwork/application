@@ -41,6 +41,30 @@ android {
     buildFeatures {
         compose = true
     }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("POLARIS_RELEASE_STORE_FILE") ?: "polaris-release-key.jks")
+            storePassword = System.getenv("POLARIS_RELEASE_STORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("POLARIS_RELEASE_KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("POLARIS_RELEASE_KEY_PASSWORD") ?: ""
+        }
+    }
+
+    buildTypes {
+        release {
+            // Apply the signing configuration to the release build
+            signingConfig = signingConfigs.getByName("release")
+
+            // Enable code shrinking and obfuscation
+            isMinifyEnabled = true
+            isShrinkResources = true // Removes unused resources
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
 }
 
 dependencies {
